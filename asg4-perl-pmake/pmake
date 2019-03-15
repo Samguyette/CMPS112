@@ -1,0 +1,218 @@
+#!/usr/bin/perl
+# Samuel Guyette sguyette@ucsc.edu
+# Sergey Gasparyan sgasparyan
+use strict;
+use warnings;
+use Getopt::Std;
+
+my $make_file = 'Makefile';
+my $target_name;
+my $starting_target;
+my $starting_boolean = 0;
+my %options = ();
+my %macro_hash;
+my %target_hash;
+my %command_hash;
+my %target_hash_copy;
+my %numTable;
+my $count = 0;
+
+getopts("dd:", \%options);
+
+if (defined $options{d}){
+     print "Debug info\n";
+     print "File name: pmake\n";
+     print "Targets: ";
+     foreach my $t (@ARGV) {
+         print $t . " ";
+     }
+     print "\n";
+}
+
+open my $fh, '<', $make_file
+     or die "Could not open file 'Makefile'.";
+
+while(my $line = <$fh>) {
+     $count = $count + 1;
+     $numTable{$line} = $count;
+
+     my $front_char = substr($line, 0, 1);
+     if (!($front_char eq '#')) {
+          if (!($line =~ /\t/) && ($line =~ /=/)){
+               use Data::Dumper qw(Dumper);
+               my @break = split /=/, $line;
+               $break[0] =~ s/^\s+|\s+$//g;
+               $break[1] =~ s/^\s+|\s+$//g;
+               my $variable_val = $break[1];
+
+               if($variable_val =~ '$'){
+                                    while($variable_val =~ /\{(.*?)\}/){
+                         my $inside_contents = $1;
+                         my $inside_contents_value =
+                             $macro_hash{$inside_contents};
+                         $variable_val =~ s/$inside_contents
+                             /$inside_contents_value/ig;
+                         $variable_val =~ s/}//;
+                         $variable_val =~ s/{//;
+                    }
+               }
+               $variable_val =~ s/\$//;
+               $variable_val =~ s/\$//;
+               $macro_hash{$break[0]} = $variable_val;
+          }
+          if (!($line =~ /\t/) && ($line =~ /:/)){
+               use Data::Dumper qw(Dumper);
+               my @break = split /:/, $line;
+
+               $target_name = $break[0];
+               $target_name =~ tr/ //ds;
+
+               my $front_target_name = substr($target_name, 0, 1);
+               if($front_target_name eq '$') {
+                    $target_name =~ s/^.//;
+                    $target_name =~ s/^.//;
+                    $target_name =~ s/}//;
+                    $target_name =~ s/^\s*(.*?)\s*$/$1/;
+                    $target_name = $macro_hash{$target_name};
+               }
+               if($starting_boolean eq 0){
+                    $starting_target = $target_name;
+                    $starting_boolean = 1;
+               }
+
+               splice @break, 0, 1;
+               my @dependincies_break = split / /, $break[0];
+               use Data::Dumper;
+               my @dependincies_break_no_white =
+                  grep(s/\s*$//g, @dependincies_break);
+               splice @dependincies_break_no_white, 0, 1;
+
+               for(my $i = 0;$i < @dependincies_break_no_white;$i++){
+                    my $temp_val_in_list =
+                       $dependincies_break_no_white[$i];
+                    my $front_temp = substr($temp_val_in_list, 0, 1);
+                    if($front_temp eq '$'){
+                         $temp_val_in_list =~ s/^.//;
+                           $temp_val_in_list =~ s/^.//;
+                         $temp_val_in_list =~ s/}//;
+
+                         my $dependincies_string =
+                             $macro_hash{$temp_val_in_list};
+                         my @dependincies_split = split / /,
+                             $dependincies_string;
+                         push(@dependincies_break_no_white,
+                             @dependincies_split);
+                         splice @dependincies_break_no_white, 0, 1;
+                    }
+               }
+
+               if(@dependincies_break_no_white ne 0){
+                    $target_hash{$target_name} =
+                        [@dependincies_break_no_white];
+               }
+          }
+
+          if($line =~ /\t/){
+               $line =~ s/^\s+//;
+               $target_name =~ tr/ //ds;
+
+               my $front_next_name = substr($target_name, 0, 1);
+               if($front_next_name eq '$'){
+                    $target_name =~ s/^.//;
+                    $target_name =~ s/^.//;
+                    $target_name =~ s/}//;
+                    $target_name =~ $macro_hash{$target_name};
+               }
+               my $temp_line = $line;
+               if($temp_line =~ '$'){
+                    while($temp_line =~ /\{(.*?)\}/){
+                         my $inside_contents = $1;
+                         my $inside_contents_value =
+                            $macro_hash{$inside_contents};
+                         $temp_line =~ s/$inside_contents/
+                                    $inside_contents_value/ig;
+                         $temp_line =~ s/}//;
+                         $temp_line =~ s/{//;
+                    }
+               }
+               $temp_line =~ s/\$//;
+               $temp_line =~ s/\$//;
+               $temp_line =~ s/\$//;
+               $temp_line =~ s/\$//;
+               $temp_line =~ s/\$//;
+               $temp_line =~ s/\$//;
+
+               $command_hash{$target_name} = $temp_line;
+          }
+     }
+}
+%target_hash_copy = %target_hash;
+my $one_rep = 1;
+my $has_argument = 0;
+if(exists $ARGV[0]){
+     $starting_target = $ARGV[0];
+     $has_argument = 1;
+}
+get_bottom_dependency($starting_target);
+
+if($one_rep > 1) {
+     $starting_target =~ tr/ //ds;
+     if(exists $command_hash{$starting_target}){
+          if($has_argument eq 0){
+               my $curr_command = $command_hash{$starting_target};
+               my $first_char = substr($curr_command, 0, 1);
+               if($first_char eq '@'){
+                    $curr_command =~ s/^.//;
+                    system($curr_command);
+                    if ($? != 0){
+                    die "make: *** [Makefile:$numTable{$curr_command}
+                       : $starting_target] " . "Error 1\n";
+                    }
+               } else {
+                    print $curr_command;
+                    system($curr_command);
+                    if ($? != 0) {
+                    die "make: *** [Makefile:$numTable{curr_command}
+                       : $starting_target] " . "Error 1\n";
+                    }
+               }
+          }
+     }
+}
+
+sub get_bottom_dependency {
+     my ($curr_target) = @_;
+     my $next_target;
+     my $i = 0;
+     while(exists($target_hash_copy{$curr_target}[$i]) && exists(
+        $command_hash{$target_hash_copy{$curr_target}[$i]})){
+          $next_target = $target_hash{$curr_target}[$i];
+           $one_rep = $one_rep + 1;
+          get_bottom_dependency($next_target);
+
+          if(exists $target_hash{$curr_target}[$i+1]){
+               $curr_target = $target_hash{$curr_target}[$i+1];
+          } else{
+               last;
+          }
+     }
+     if(exists $command_hash{$curr_target}){
+          my $curr_command = $command_hash{$curr_target};
+          my $first_char = substr($curr_command, 0, 1);
+          if($first_char eq '@') {
+               $curr_command =~ s/^.//;
+               system($curr_command);
+               if ($? != 0) {
+               die "make: *** [Makefile:$numTable{$curr_command}
+                    :$curr_target] " . "Error 1\n";
+               }
+          } else {
+               print $curr_command;
+               system($curr_command);
+               if ($? != 0) {
+                    die "make: *** [Makefile:$numTable{$curr_command}
+                        : $curr_target]" . "Error 1\n";
+               }
+          }
+     }
+}
